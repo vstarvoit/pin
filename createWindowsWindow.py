@@ -7,6 +7,13 @@ user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 HCURSOR = ctypes.c_void_p
 
+gdi32 = ctypes.windll.gdi32
+
+WM_PAINT = 0x000F
+SRCCOPY = 0x00CC0020
+IMAGE_BITMAP = 0
+LR_LOADFROMFILE = 0x00000010
+
 if ctypes.sizeof(ctypes.c_void_p) == 8:
     LRESULT = ctypes.c_longlong
     WPARAM = ctypes.c_ulonglong
@@ -32,19 +39,89 @@ user32.DefWindowProcW.argtypes = (
     wintypes.LPARAM,
 )
 
+bitmap = user32.LoadImageW(
+    None,
+    "images.bmp",  
+    IMAGE_BITMAP,
+    0,
+    0,
+    LR_LOADFROMFILE
+)
+
+if not bitmap:
+    raise RuntimeError("Failed to load bitmap")
+
 user32.DefWindowProcW.restype = LRESULT
 
 WM_DESTROY: Final[int] = 0x0002
+
+class PAINTSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("hdc", wintypes.HDC),
+        ("fErase", wintypes.BOOL),
+        ("rcPaint", wintypes.RECT),
+        ("fRestore", wintypes.BOOL),
+        ("fIncUpdate", wintypes.BOOL),
+        ("rgbReserved", ctypes.c_byte * 32),
+    ]
+
 
 def py_wnd_proc(hwnd, msg, wparam, lparam):
     if msg == WM_DESTROY:
         user32.PostQuitMessage(0)
         return 0
+    elif msg == WM_PAINT:
+        ps = PAINTSTRUCT()
+        hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
+
+        mem_dc = gdi32.CreateCompatibleDC(hdc)
+
+        old_obj = gdi32.SelectObject(mem_dc, bitmap)
+
+        class BITMAP(ctypes.Structure):
+            _fields_ = [
+                ("bmType", ctypes.c_long),
+                ("bmWidth", ctypes.c_long),
+                ("bmHeight", ctypes.c_long),
+                ("bmWidthBytes", ctypes.c_long),
+                ("bmPlanes", ctypes.c_ushort),
+                ("bmBitsPixel", ctypes.c_ushort),
+                ("bmBits", ctypes.c_void_p),
+            ]
+
+        bmp = BITMAP()
+        gdi32.GetObjectW(bitmap, ctypes.sizeof(bmp), ctypes.byref(bmp))
+        gdi32.SetStretchBltMode(hdc, 0x0002);
+        # gdi32.BitBlt(
+        #     hdc,
+        #     0, 0,
+        #     bmp.bmWidth,
+        #     bmp.bmHeight,
+        #     mem_dc,
+        #     0, 0,
+        #     SRCCOPY
+        # )
+
+        gdi32.StretchBlt(
+            hdc,
+            0, 0,
+            800,
+            600,
+            mem_dc,
+            0, 0,
+            bmp.bmWidth,
+            bmp.bmHeight,
+            SRCCOPY
+        )
+
+        gdi32.SelectObject(mem_dc, old_obj)
+        gdi32.DeleteDC(mem_dc)
+        user32.EndPaint(hwnd, ctypes.byref(ps))
+        print("it was called")
+        return 0
     return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
 wnd_proc = WNDPROCTYPE(py_wnd_proc)
-
-
 
 class WNDCLASS(ctypes.Structure):
     _fields_ = [
