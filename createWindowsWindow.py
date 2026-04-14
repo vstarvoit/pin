@@ -12,6 +12,7 @@ gdi32 = ctypes.windll.gdi32
 
 WM_DESTROY: Final[int] = 0x0002
 WM_PAINT: Final[int] = 0x000F
+WM_SIZE: Final[int] = 0x0005
 SRCCOPY: Final[int] = 0x00CC0020
 IMAGE_BITMAP: Final[int] = 0
 LR_LOADFROMFILE: Final[int] = 0x00000010
@@ -49,7 +50,7 @@ class CreateWindow:
 
             bmp = BITMAP()
             gdi32.GetObjectW(self.bitmap, ctypes.sizeof(bmp), ctypes.byref(bmp))
-            gdi32.SetStretchBltMode(hdc, 0x0000)
+            gdi32.SetStretchBltMode(hdc, 0x0003)
             # gdi32.BitBlt(
             #     hdc,
             #     0, 0,
@@ -59,12 +60,16 @@ class CreateWindow:
             #     0, 0,
             #     SRCCOPY
             # )
+            rect = RECT()
+            user32.GetClientRect(hwnd, ctypes.byref(rect))
 
+            width = rect.right - rect.left
+            height = rect.bottom - rect.top
             gdi32.StretchBlt(
                 hdc,
                 0, 0,
-                800,
-                600,
+                width,
+                height,
                 mem_dc,
                 0, 0,
                 bmp.bmWidth,
@@ -75,6 +80,9 @@ class CreateWindow:
             gdi32.SelectObject(mem_dc, old_obj)
             gdi32.DeleteDC(mem_dc)
             user32.EndPaint(hwnd, ctypes.byref(ps))
+            return 0
+        elif msg == WM_SIZE:
+            user32.InvalidateRect(hwnd, None, True)
             return 0
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -140,6 +148,8 @@ class CreateWindow:
 
     def createWindowClassCleanup(self, className:str):
         user32.UnregisterClassW(className, self.hInstance)
+
+
 
     def __init__(self):
         
