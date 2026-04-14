@@ -1,9 +1,10 @@
-from BitmapRenderer import BitmapRenderer
 import ctypes
 from ctypes import wintypes
 from typing import Final
 import winStructures
 from winStructures import *
+import uuid
+
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -16,7 +17,7 @@ IMAGE_BITMAP: Final[int] = 0
 LR_LOADFROMFILE: Final[int] = 0x00000010
 
 class CreateWindow:
-    class_name:str = "WindowClass"
+    class_name:str = None
     windowName:str = "Window"
     bitmap = None
     hInstance = kernel32.GetModuleHandleW(None)
@@ -79,9 +80,8 @@ class CreateWindow:
 
     def createWindowClass(self):
         wndclass = WNDCLASS()   
-        # wnd_proc = WNDPROCTYPE(self.windowProcedure)
-        
-        wndclass.lpfnWndProc = WNDPROCTYPE(self.windowProcedure) #wnd_proc
+        self.wnd_proc = WNDPROCTYPE(self.windowProcedure)
+        wndclass.lpfnWndProc = self.wnd_proc
         wndclass.lpszClassName = self.class_name
         wndclass.hInstance = self.hInstance
         wndclass.hCursor = user32.LoadCursorW(None, 32512)
@@ -138,11 +138,15 @@ class CreateWindow:
 
         print(f"Error {error_code}: {message}")
 
+    def createWindowClassCleanup(self, className:str):
+        user32.UnregisterClassW(className, self.hInstance)
+
     def __init__(self):
         
         self.bitmap = self.loadBitmap("images.bmp")
         self.setTypes()
         user32.DefWindowProcW.restype = LRESULT
+        self.class_name = uuid.uuid4().hex
         wndclass = self.createWindowClass()
 
         # self.printError()
@@ -153,5 +157,10 @@ class CreateWindow:
         user32.UpdateWindow(hwnd)
         self.messageLoop()
 
+        self.createWindowClassCleanup(self.class_name)
+
+
+
 if __name__ == "__main__":
+    window = CreateWindow()
     window = CreateWindow()
