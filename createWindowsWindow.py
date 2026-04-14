@@ -16,12 +16,14 @@ WM_SIZE: Final[int] = 0x0005
 SRCCOPY: Final[int] = 0x00CC0020
 IMAGE_BITMAP: Final[int] = 0
 LR_LOADFROMFILE: Final[int] = 0x00000010
+WS_OVERLAPPEDWINDOW: Final[int] = 0x10CF0000
 
 class CreateWindow:
     class_name:str = None
     windowName:str = "Window"
     bitmap = None
     hInstance = kernel32.GetModuleHandleW(None)
+    hwnd = None
 
     def loadBitmap(self, filename:str):
         bitmap = user32.LoadImageW(
@@ -101,14 +103,11 @@ class CreateWindow:
 
         return wndclass
 
-    def createWindow(self):
+    def createWindow(self, width:int, height:int):
         menu = user32.CreateMenu()
         
-        WS_OVERLAPPEDWINDOW: Final[int] = 0x10CF0000
         X: Final[int] = 100
         Y: Final[int] = 100
-        width: Final[int] = 800
-        height: Final[int] = 600
         
         hwnd = user32.CreateWindowExW(
         0, 
@@ -131,6 +130,8 @@ class CreateWindow:
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
+        self.createWindowClassCleanup(self.class_name)
+        
     
     def setTypes(self):
         user32.DefWindowProcW.argtypes = (
@@ -149,28 +150,33 @@ class CreateWindow:
     def createWindowClassCleanup(self, className:str):
         user32.UnregisterClassW(className, self.hInstance)
 
+    
 
-
-    def __init__(self):
-        
-        self.bitmap = self.loadBitmap("images.bmp")
+    def _init(self, width, height):
         self.setTypes()
         user32.DefWindowProcW.restype = LRESULT
         self.class_name = uuid.uuid4().hex
         wndclass = self.createWindowClass()
-
+       
         # self.printError()
 
-        hwnd = self.createWindow()
+        hwnd = self.createWindow(width, height)
 
         user32.ShowWindow(hwnd, 1)
         user32.UpdateWindow(hwnd)
-        self.messageLoop()
 
-        self.createWindowClassCleanup(self.class_name)
+    def __init__(self, image: str, width: int = 800, height: int = 600): # make later image size scaled to monitor size 
+        self.bitmap = self.loadBitmap(image)
+        self._init(width, height) 
+    
+    
+        
+
 
 
 
 if __name__ == "__main__":
-    window = CreateWindow()
-    window = CreateWindow()
+    window = CreateWindow("images.bmp")
+    window.messageLoop()
+    window = CreateWindow("images.bmp", 500, 500)
+    window.messageLoop()
