@@ -16,4 +16,5 @@ def convert_to_bmp(input_path, output_path=None):
     except Exception as e:
         print(f"Error: {e}")
 
-convert_to_bmp("images.jpg")
+if __name__ == "__main__":
+    convert_to_bmp("images2.jpg")

@@ -1,14 +1,15 @@
-from createWindowsWindow import CreateWindow
+from createWindowsWindow import CreateWindow, WindowHolder
 import threading
+import time
 
-def task():
-    window = CreateWindow()
-    
-t1 = threading.Thread(target=task)
-t2 = threading.Thread(target=task)
 
-t1.start()
-t2.start()
+holder:WindowHolder = CreateWindow("images2.bmp")
 
+bmp:CreateWindow.loadBitmap = holder.loadBitmap
+time.sleep(3)
+bmp("images.bmp")
+
+t1 = holder.thread
 t1.join()
-t2.join()
+
+# git commit -m "Decouple window handling from main thread"

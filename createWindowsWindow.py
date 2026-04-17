@@ -4,6 +4,7 @@ from typing import Final
 import winStructures
 from winStructures import *
 import uuid
+import threading
 
 
 user32 = ctypes.windll.user32
@@ -17,6 +18,13 @@ SRCCOPY: Final[int] = 0x00CC0020
 IMAGE_BITMAP: Final[int] = 0
 LR_LOADFROMFILE: Final[int] = 0x00000010
 WS_OVERLAPPEDWINDOW: Final[int] = 0x10CF0000
+WM_APP: Final[int] = 0x8000
+
+class WindowHolder:
+    def __init__(self):
+        self.window = None
+        self.loadBitmap = None
+        self.thread:threading.Thread = None
 
 class CreateWindow:
     class_name:str = None
@@ -25,7 +33,20 @@ class CreateWindow:
     hInstance = kernel32.GetModuleHandleW(None)
     hwnd = None
 
+    @staticmethod
+    def task(holder, ready_event, image, width, height):
+        window = object.__new__(CreateWindow)
+        CreateWindow.__init__(window, image, width, height)
+
+        holder.window = window
+        holder.loadBitmap = window.loadBitmap
+
+        ready_event.set()
+        window.messageLoop()
+
     def loadBitmap(self, filename:str):
+        if self.bitmap != None:
+            gdi32.DeleteObject(self.bitmap)
         bitmap = user32.LoadImageW(
             None,
             filename,  
@@ -36,6 +57,8 @@ class CreateWindow:
         )
         if not bitmap:
             raise RuntimeError("Failed to load bitmap")
+        self.bitmap = bitmap
+        user32.PostMessageW(self.hwnd, WM_APP + 1, 0, 0)
         return bitmap
     
     def windowProcedure(self, hwnd, msg, wparam, lparam):
@@ -86,6 +109,11 @@ class CreateWindow:
         elif msg == WM_SIZE:
             user32.InvalidateRect(hwnd, None, True)
             return 0
+        elif msg == WM_APP + 1:
+            user32.InvalidateRect(hwnd, None, True)
+            return 0
+        # self.printError()
+
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def createWindowClass(self):
@@ -122,7 +150,7 @@ class CreateWindow:
         )
         if not hwnd:
             raise RuntimeError("CreateWindowEx failed: " + ctypes.FormatError(kernel32.GetLastError()))
-
+        self.hwnd = hwnd
         return hwnd
 
     def messageLoop(self):
@@ -169,11 +197,16 @@ class CreateWindow:
         self.bitmap = self.loadBitmap(image)
         self._init(width, height) 
     
+    def __new__(cls, image: str, width: int = 800, height: int = 600) -> WindowHolder:
+        holder = WindowHolder()
+        ready = threading.Event()
+
+        t1 = threading.Thread(target=cls.task, args=(holder, ready, image, width, height))
+        t1.start()
+        holder.thread = t1
+        ready.wait()
+        return holder
     
-        
-
-
-
 
 if __name__ == "__main__":
     window = CreateWindow("images.bmp")
