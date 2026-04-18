@@ -1,15 +1,22 @@
-from createWindowsWindow import CreateWindow, WindowHolder
+from createWindowsWindow import AppController
 import threading
 import time
 
 
-holder:WindowHolder = CreateWindow("images2.bmp")
+ac = AppController()
+ac.start("images.bmp")
 
-bmp:CreateWindow.loadBitmap = holder.loadBitmap
-time.sleep(3)
-bmp("images.bmp")
 
-t1 = holder.thread
-t1.join()
 
-# git commit -m "Decouple window handling from main thread"
+while(True):
+    time.sleep(1)
+    if not ac.isAlive():
+        break
+    ac.loadBitmap("images2.bmp")
+    time.sleep(1)
+    if not ac.isAlive():
+        break
+    ac.loadBitmap("images.bmp")
+
+
+ac.join()

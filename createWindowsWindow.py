@@ -19,34 +19,66 @@ IMAGE_BITMAP: Final[int] = 0
 LR_LOADFROMFILE: Final[int] = 0x00000010
 WS_OVERLAPPEDWINDOW: Final[int] = 0x10CF0000
 WM_APP: Final[int] = 0x8000
+WM_CLOSE: Final[int] = 0x0010
+SW_SHOWNORMAL: Final[int] = 0x0001
+WM_ERASEBKGND: Final[int] = 0x0014
 
-class WindowHolder:
-    def __init__(self):
-        self.window = None
-        self.loadBitmap = None
-        self.thread:threading.Thread = None
+class UIThread:
+    window = None
+    
+    def run(self, ready:threading.Event, imagePath:str, windowName:str = "Window", width:int = 800, height:int = 600):
+        self.window = Window(imagePath, windowName, width, height)
+        ready.set()
+        self.window.messageLoop()
 
-class CreateWindow:
+    def loadBitmap(self, path:str):
+        self.window.loadBitmap(path)
+
+    def stop(self):
+        if self.window and self.window.hwnd:
+            user32.PostMessageW(self.window.hwnd, WM_CLOSE, 0, 0)  # WM_CLOSE
+
+class AppController:
+    uithread:UIThread = None
+    thread = None
+
+    def __init__(self): 
+        self.uithread = UIThread()
+
+    def start(self, imagePath:str, windowName:str = "Window", width:int = 800, height:int = 600):
+        ready = threading.Event()
+        self.thread = threading.Thread(
+            target=self.uithread.run,
+            args=(ready, imagePath, windowName, width, height)
+        )
+        self.thread.start()
+        ready.wait()
+
+    def loadBitmap(self, path:str):
+        self.uithread.loadBitmap(path)
+
+    def isAlive(self) -> bool:
+        return self.thread.is_alive()
+
+    def close(self):
+        if self.thread and self.thread.is_alive():
+            self.uithread.stop()
+            self.thread.join()
+
+    def join(self):
+        self.thread.join()
+
+
+class Window:
     class_name:str = None
     windowName:str = "Window"
     bitmap = None
     hInstance = kernel32.GetModuleHandleW(None)
     hwnd = None
 
-    @staticmethod
-    def task(holder, ready_event, image, width, height):
-        window = object.__new__(CreateWindow)
-        CreateWindow.__init__(window, image, width, height)
-
-        holder.window = window
-        holder.loadBitmap = window.loadBitmap
-
-        ready_event.set()
-        window.messageLoop()
+    
 
     def loadBitmap(self, filename:str):
-        if self.bitmap != None:
-            gdi32.DeleteObject(self.bitmap)
         bitmap = user32.LoadImageW(
             None,
             filename,  
@@ -55,23 +87,37 @@ class CreateWindow:
             0,
             LR_LOADFROMFILE
         )
+        # self.printError()
+
         if not bitmap:
             raise RuntimeError("Failed to load bitmap")
-        self.bitmap = bitmap
+        self.bitmap, bitmap = bitmap, self.bitmap
+        if bitmap != None:
+            gdi32.DeleteObject(bitmap)
         user32.PostMessageW(self.hwnd, WM_APP + 1, 0, 0)
-        return bitmap
+        
+        return self.bitmap
     
     def windowProcedure(self, hwnd, msg, wparam, lparam):
         if msg == WM_DESTROY:
-            user32.PostQuitMessage(0)
+            self.cleanup()
+            user32.PostQuitMessage(0)     
             return 0
         elif msg == WM_PAINT:
             ps = PAINTSTRUCT()
             hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
 
             mem_dc = gdi32.CreateCompatibleDC(hdc)
-
+            if not self.bitmap:
+                user32.EndPaint(hwnd, ctypes.byref(ps))
+                return 0
+            
             old_obj = gdi32.SelectObject(mem_dc, self.bitmap)
+            
+            if not old_obj:
+                gdi32.DeleteDC(mem_dc)
+                user32.EndPaint(hwnd, ctypes.byref(ps))
+                return 0
 
             bmp = BITMAP()
             gdi32.GetObjectW(self.bitmap, ctypes.sizeof(bmp), ctypes.byref(bmp))
@@ -107,14 +153,23 @@ class CreateWindow:
             user32.EndPaint(hwnd, ctypes.byref(ps))
             return 0
         elif msg == WM_SIZE:
-            user32.InvalidateRect(hwnd, None, True)
+            user32.InvalidateRect(hwnd, None, False)
             return 0
         elif msg == WM_APP + 1:
-            user32.InvalidateRect(hwnd, None, True)
+            user32.InvalidateRect(hwnd, None, False)
             return 0
+        elif msg == WM_CLOSE:
+            user32.DestroyWindow(hwnd)  # triggers WM_DESTROY
+            return 0
+        elif msg == WM_ERASEBKGND:
+            return 1  # tell Windows "I handled it"
+            
         # self.printError()
 
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def stop(self):
+        user32.PostQuitMessage(0)
 
     def createWindowClass(self):
         wndclass = WNDCLASS()   
@@ -132,21 +187,20 @@ class CreateWindow:
         return wndclass
 
     def createWindow(self, width:int, height:int):
-        menu = user32.CreateMenu()
         
         X: Final[int] = 100
         Y: Final[int] = 100
         
         hwnd = user32.CreateWindowExW(
-        0, 
-        self.class_name,
-        self.windowName,
-        WS_OVERLAPPEDWINDOW,
-        X, Y, width, height,
-        None,
-        menu,
-        self.hInstance,
-        None
+            0, 
+            self.class_name,
+            self.windowName,
+            WS_OVERLAPPEDWINDOW,
+            X, Y, width, height,
+            None,
+            None,
+            self.hInstance,
+            None
         )
         if not hwnd:
             raise RuntimeError("CreateWindowEx failed: " + ctypes.FormatError(kernel32.GetLastError()))
@@ -158,7 +212,6 @@ class CreateWindow:
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
-        self.createWindowClassCleanup(self.class_name)
         
     
     def setTypes(self):
@@ -175,12 +228,26 @@ class CreateWindow:
 
         print(f"Error {error_code}: {message}")
 
-    def createWindowClassCleanup(self, className:str):
-        user32.UnregisterClassW(className, self.hInstance)
-
+    def createWindowClassCleanup(self): # rewrite when multiple windows needed
+        user32.UnregisterClassW(self.class_name ,self.hInstance)
     
+    def bitmapCleanup(self):
+        if self.bitmap:
+            gdi32.DeleteObject(self.bitmap)
+            self.bitmap = None
 
-    def _init(self, width, height):
+    def windowCleanup(self):
+        if self.hwnd:
+            user32.DestroyWindow(self.hwnd)
+            self.hwnd = None
+    
+    def cleanup(self):
+        self.bitmapCleanup()
+        self.windowCleanup()
+        self.createWindowClassCleanup()
+
+
+    def __init__(self, image: str, windowname:str, width: int = 800, height: int = 600): # make later image size scaled to monitor size 
         self.setTypes()
         user32.DefWindowProcW.restype = LRESULT
         self.class_name = uuid.uuid4().hex
@@ -188,28 +255,26 @@ class CreateWindow:
        
         # self.printError()
 
-        hwnd = self.createWindow(width, height)
-
-        user32.ShowWindow(hwnd, 1)
-        user32.UpdateWindow(hwnd)
-
-    def __init__(self, image: str, width: int = 800, height: int = 600): # make later image size scaled to monitor size 
+        try:
+             hwnd = self.createWindow(width, height)
+        except:
+            self.cleanup()
+            raise RuntimeError("Window creation failed")
+            
         self.bitmap = self.loadBitmap(image)
-        self._init(width, height) 
-    
-    def __new__(cls, image: str, width: int = 800, height: int = 600) -> WindowHolder:
-        holder = WindowHolder()
-        ready = threading.Event()
 
-        t1 = threading.Thread(target=cls.task, args=(holder, ready, image, width, height))
-        t1.start()
-        holder.thread = t1
-        ready.wait()
-        return holder
+        user32.ShowWindow(hwnd, SW_SHOWNORMAL)
+        user32.UpdateWindow(hwnd)
+    
+    
     
 
 if __name__ == "__main__":
-    window = CreateWindow("images.bmp")
-    window.messageLoop()
-    window = CreateWindow("images.bmp", 500, 500)
-    window.messageLoop()
+    
+    # ready = threading.Event()
+    # uithread = UIThread()
+    # uithread.run(ready, "images.bmp")
+    
+    ac = AppController()
+    ac.start("images.bmp")
+    ac.join()
