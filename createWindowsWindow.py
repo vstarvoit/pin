@@ -22,6 +22,10 @@ WM_APP: Final[int] = 0x8000
 WM_CLOSE: Final[int] = 0x0010
 SW_SHOWNORMAL: Final[int] = 0x0001
 WM_ERASEBKGND: Final[int] = 0x0014
+GWL_STYLE: Final[int] = -16
+WS_SYSMENU: Final[ctypes.c_long] = 0x00080000
+WS_CAPTION: Final[ctypes.c_long] = 0x00C00000
+WS_THICKFRAME: Final[ctypes.c_long] = 0x00040000
 
 class UIThread:
     window = None
@@ -34,9 +38,18 @@ class UIThread:
     def loadBitmap(self, path:str):
         self.window.loadBitmap(path)
 
+    def setTransparency(self):
+        pass
+
+    def showTitleBar(self):
+        self.window.showTitleBar()
+
+    def hideTitleBar(self):
+        self.window.hideTitleBar()
+
     def stop(self):
         if self.window and self.window.hwnd:
-            user32.PostMessageW(self.window.hwnd, WM_CLOSE, 0, 0)  # WM_CLOSE
+            user32.PostMessageW(self.window.hwnd, WM_CLOSE, 0, 0) 
 
 class AppController:
     uithread:UIThread = None
@@ -53,6 +66,15 @@ class AppController:
         )
         self.thread.start()
         ready.wait()
+
+    def showTitleBar(self):
+        self.uithread.showTitleBar()
+
+    def hideTitleBar(self):
+        self.uithread.hideTitleBar()
+
+    def setTransparency(self):
+        pass
 
     def loadBitmap(self, path:str):
         self.uithread.loadBitmap(path)
@@ -221,6 +243,31 @@ class Window:
             wintypes.WPARAM,
             wintypes.LPARAM,
         )
+
+    def showTitleBar(self):
+        style = user32.GetWindowLongW(self.hwnd, GWL_STYLE)
+
+        new_style = style | (WS_CAPTION | WS_SYSMENU | WS_THICKFRAME)
+
+        user32.SetWindowLongW(self.hwnd, GWL_STYLE, new_style)
+
+        user32.SetWindowPos(
+            self.hwnd, 0, 0, 0, 0, 0,
+            0x0027 # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+        )
+
+    def hideTitleBar(self):
+        style = user32.GetWindowLongW(self.hwnd, GWL_STYLE)
+
+        new_style = style & ~(WS_CAPTION | WS_SYSMENU | WS_THICKFRAME)
+
+        user32.SetWindowLongW(self.hwnd, GWL_STYLE, new_style)
+
+        user32.SetWindowPos(
+            self.hwnd, 0, 0, 0, 0, 0,
+            0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+        )
+
 
     def printError(self):
         error_code = kernel32.GetLastError()
