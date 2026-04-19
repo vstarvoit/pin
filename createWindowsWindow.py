@@ -5,7 +5,7 @@ import winStructures
 from winStructures import *
 import uuid
 import threading
-
+import time
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -26,6 +26,9 @@ GWL_STYLE: Final[int] = -16
 WS_SYSMENU: Final[ctypes.c_long] = 0x00080000
 WS_CAPTION: Final[ctypes.c_long] = 0x00C00000
 WS_THICKFRAME: Final[ctypes.c_long] = 0x00040000
+WS_EX_LAYERED: Final[int] = 0x00080000
+LWA_ALPHA: Final[int] = 0x00000002
+GWL_EXSTYLE: Final[int] = -20
 
 class UIThread:
     window = None
@@ -38,8 +41,10 @@ class UIThread:
     def loadBitmap(self, path:str):
         self.window.loadBitmap(path)
 
-    def setTransparency(self):
-        pass
+    def setTransparency(self, alpha:ctypes.c_byte):
+        if self.window:
+            self.window.setTransparency(alpha)
+        self.window.refreshWindow()
 
     def showTitleBar(self):
         self.window.showTitleBar()
@@ -67,14 +72,19 @@ class AppController:
         self.thread.start()
         ready.wait()
 
+    def setTransparencyPercent(self, percent: int):
+        alpha = int(255 * percent / 100)
+        self.uithread.setTransparency(alpha)
+
     def showTitleBar(self):
         self.uithread.showTitleBar()
 
     def hideTitleBar(self):
         self.uithread.hideTitleBar()
 
-    def setTransparency(self):
-        pass
+    def setTransparency(self, alpha:ctypes.c_byte):
+        self.uithread.setTransparency(alpha)
+
 
     def loadBitmap(self, path:str):
         self.uithread.loadBitmap(path)
@@ -144,15 +154,6 @@ class Window:
             bmp = BITMAP()
             gdi32.GetObjectW(self.bitmap, ctypes.sizeof(bmp), ctypes.byref(bmp))
             gdi32.SetStretchBltMode(hdc, 0x0003)
-            # gdi32.BitBlt(
-            #     hdc,
-            #     0, 0,
-            #     bmp.bmWidth,
-            #     bmp.bmHeight,
-            #     mem_dc,
-            #     0, 0,
-            #     SRCCOPY
-            # )
             rect = RECT()
             user32.GetClientRect(hwnd, ctypes.byref(rect))
 
@@ -268,6 +269,9 @@ class Window:
             0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
         )
 
+    def setTransparency(self, alpha:ctypes.c_byte):
+        user32.SetLayeredWindowAttributes(self.hwnd, 0, alpha, LWA_ALPHA)
+        
 
     def printError(self):
         error_code = kernel32.GetLastError()
@@ -293,6 +297,9 @@ class Window:
         self.windowCleanup()
         self.createWindowClassCleanup()
 
+    def refreshWindow(self):
+        user32.InvalidateRect(self.hwnd, None, True)
+        user32.UpdateWindow(self.hwnd)
 
     def __init__(self, image: str, windowname:str, width: int = 800, height: int = 600): # make later image size scaled to monitor size 
         self.setTypes()
@@ -307,21 +314,34 @@ class Window:
         except:
             self.cleanup()
             raise RuntimeError("Window creation failed")
-            
+        ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
         self.bitmap = self.loadBitmap(image)
 
         user32.ShowWindow(hwnd, SW_SHOWNORMAL)
         user32.UpdateWindow(hwnd)
     
-    
-    
 
 if __name__ == "__main__":
     
-    # ready = threading.Event()
-    # uithread = UIThread()
-    # uithread.run(ready, "images.bmp")
-    
     ac = AppController()
-    ac.start("images.bmp")
-    ac.join()
+    ac.start("1.bmp")
+
+
+    while(True):
+        time.sleep(1)
+        if not ac.isAlive():
+            break
+        ac.loadBitmap("2.bmp")
+        ac.setTransparencyPercent(15)
+        ac.showTitleBar()
+
+        time.sleep(1)
+        if not ac.isAlive():
+            break
+        ac.loadBitmap("1.bmp")
+        ac.setTransparencyPercent(15)
+        ac.hideTitleBar()
+        
+
+    ac.join()   

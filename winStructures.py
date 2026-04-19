@@ -62,3 +62,46 @@ class RECT(ctypes.Structure):
         ("right", ctypes.c_long),
         ("bottom", ctypes.c_long)
     ]
+
+class RGBQUAD(ctypes.Structure):
+    _fields_ = [
+        ("rgbBlue", ctypes.c_byte),
+        ("rgbGreen", ctypes.c_byte),
+        ("rgbRed", ctypes.c_byte),
+        ("rgbReserved", ctypes.c_byte),
+    ]
+
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", ctypes.c_uint32),
+        ("biWidth", ctypes.c_int32),
+        ("biHeight", ctypes.c_int32),
+        ("biPlanes", ctypes.c_uint16),
+        ("biBitCount", ctypes.c_uint16),
+        ("biCompression", ctypes.c_uint32),
+        ("biSizeImage", ctypes.c_uint32),
+        ("biXPelsPerMeter", ctypes.c_int32),
+        ("biYPelsPerMeter", ctypes.c_int32),
+        ("biClrUsed", ctypes.c_uint32),
+        ("biClrImportant", ctypes.c_uint32),
+    ]
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", BITMAPINFOHEADER),
+        ("bmiColors", ctypes.ARRAY(RGBQUAD, 2)), 
+    ]
+ 
+class BLENDFUNCTION(ctypes.Structure):
+    _fields_ = [
+        ("BlendOp",             ctypes.c_byte),
+        ("BlendFlags",          ctypes.c_byte),
+        ("SourceConstantAlpha", ctypes.c_byte),
+        ("AlphaFormat",         ctypes.c_byte),
+    ]
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+class SIZE(ctypes.Structure):
+    _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]

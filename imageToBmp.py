@@ -9,7 +9,7 @@ def convert_to_bmp(input_path, output_path=None):
             base = os.path.splitext(input_path)[0]
             output_path = base + ".bmp"
 
-        img.convert("RGB").save(output_path, "BMP")
+        img.convert("RGBA").save(output_path, "BMP")
 
         print(f"Converted '{input_path}' to '{output_path}' successfully.")
 
@@ -17,4 +17,4 @@ def convert_to_bmp(input_path, output_path=None):
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    convert_to_bmp("images2.jpg")
+    convert_to_bmp("1.webp")
