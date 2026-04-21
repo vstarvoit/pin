@@ -29,6 +29,7 @@ WS_THICKFRAME: Final[ctypes.c_long] = 0x00040000
 WS_EX_LAYERED: Final[int] = 0x00080000
 LWA_ALPHA: Final[int] = 0x00000002
 GWL_EXSTYLE: Final[int] = -20
+WS_EX_TOPMOST: Final[int] = 0x00000008
 
 class UIThread:
     window = None
@@ -51,6 +52,18 @@ class UIThread:
 
     def hideTitleBar(self):
         self.window.hideTitleBar()
+
+    def setTopmost(self):
+        self.window.setTopmost()
+
+    def unsetTopmost(self):
+        self.window.unsetTopmost()
+
+    def makeClickThrough(self):
+        self.window.makeClickThrough()
+
+    def unmakeClickThrough(self):
+        self.window.unmakeClickThrough()
 
     def stop(self):
         if self.window and self.window.hwnd:
@@ -85,6 +98,17 @@ class AppController:
     def setTransparency(self, alpha:ctypes.c_byte):
         self.uithread.setTransparency(alpha)
 
+    def setTopmost(self):
+        self.uithread.setTopmost()
+
+    def unsetTopmost(self):
+        self.uithread.unsetTopmost()
+
+    def makeClickThrough(self):
+        self.uithread.makeClickThrough()
+
+    def unmakeClickThrough(self):
+        self.uithread.unmakeClickThrough()
 
     def loadBitmap(self, path:str):
         self.uithread.loadBitmap(path)
@@ -215,7 +239,7 @@ class Window:
         Y: Final[int] = 100
         
         hwnd = user32.CreateWindowExW(
-            0, 
+            WS_EX_TOPMOST, 
             self.class_name,
             self.windowName,
             WS_OVERLAPPEDWINDOW,
@@ -272,6 +296,40 @@ class Window:
     def setTransparency(self, alpha:ctypes.c_byte):
         user32.SetLayeredWindowAttributes(self.hwnd, 0, alpha, LWA_ALPHA)
         
+    def setTopmost(self):
+        ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+    
+        ex_style |= WS_EX_TOPMOST
+        
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style)
+        
+        user32.SetWindowPos(
+            self.hwnd, -1, 0, 0, 0, 0,
+            0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+        )
+
+    def makeClickThrough(self):
+        ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | 0x20 | 0x80000) # WS_EX_LAYERED and WS_EX_TRANSPARENT
+        user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+    
+    def unmakeClickThrough(self):
+        ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style & ~(0x20 | 0x80000))  # WS_EX_LAYERED and WS_EX_TRANSPARENT
+        user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+
+    def unsetTopmost(self):
+        ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+        
+        ex_style &= ~WS_EX_TOPMOST
+        
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style)
+        
+        user32.SetWindowPos(
+            self.hwnd, 0, 0, 0, 0, 0,
+            0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+        )
 
     def printError(self):
         error_code = kernel32.GetLastError()
@@ -326,22 +384,22 @@ if __name__ == "__main__":
     
     ac = AppController()
     ac.start("1.bmp")
+    ac.setTransparencyPercent(90)
+    ac.showTitleBar()
+    ac.setTopmost()
+    # ac.makeClickThrough()
 
-
+    i = 15
     while(True):
         time.sleep(1)
         if not ac.isAlive():
             break
         ac.loadBitmap("2.bmp")
-        ac.setTransparencyPercent(15)
-        ac.showTitleBar()
 
         time.sleep(1)
         if not ac.isAlive():
             break
         ac.loadBitmap("1.bmp")
-        ac.setTransparencyPercent(15)
-        ac.hideTitleBar()
-        
+
 
     ac.join()   
