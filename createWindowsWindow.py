@@ -22,6 +22,7 @@ WM_APP: Final[int] = 0x8000
 WM_CLOSE: Final[int] = 0x0010
 SW_SHOWNORMAL: Final[int] = 0x0001
 WM_ERASEBKGND: Final[int] = 0x0014
+WM_HOTKEY: Final[int] = 0x0312
 GWL_STYLE: Final[int] = -16
 WS_SYSMENU: Final[ctypes.c_long] = 0x00080000
 WS_CAPTION: Final[ctypes.c_long] = 0x00C00000
@@ -131,7 +132,7 @@ class Window:
     bitmap = None
     hInstance = kernel32.GetModuleHandleW(None)
     hwnd = None
-
+    isTitleBarHidden:bool = True
     
 
     def loadBitmap(self, filename:str):
@@ -201,6 +202,13 @@ class Window:
             return 0
         elif msg == WM_SIZE:
             user32.InvalidateRect(hwnd, None, False)
+            return 0
+        elif msg == WM_HOTKEY:
+            if wparam == 1:
+                if self.isTitleBarHidden == True:
+                    self.showTitleBar()
+                elif self.isTitleBarHidden == False:
+                    self.hideTitleBar()
             return 0
         elif msg == WM_APP + 1:
             user32.InvalidateRect(hwnd, None, False)
@@ -275,7 +283,7 @@ class Window:
         new_style = style | (WS_CAPTION | WS_SYSMENU | WS_THICKFRAME)
 
         user32.SetWindowLongW(self.hwnd, GWL_STYLE, new_style)
-
+        self.isTitleBarHidden = False
         user32.SetWindowPos(
             self.hwnd, 0, 0, 0, 0, 0,
             0x0027 # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
@@ -287,7 +295,7 @@ class Window:
         new_style = style & ~(WS_CAPTION | WS_SYSMENU | WS_THICKFRAME)
 
         user32.SetWindowLongW(self.hwnd, GWL_STYLE, new_style)
-
+        self.isTitleBarHidden = True
         user32.SetWindowPos(
             self.hwnd, 0, 0, 0, 0, 0,
             0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
@@ -331,6 +339,12 @@ class Window:
             0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
         )
 
+    def setHotkey(self):
+        user32.RegisterHotKey(self.hwnd, 1, 0x0002 | 0x0001 | 0x4000, 0x53) # MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, S key
+
+    def unsetHotKey(self):
+        user32.UnregisterHotKey(self.hwnd, 1)
+
     def printError(self):
         error_code = kernel32.GetLastError()
         message = ctypes.FormatError(error_code)
@@ -372,6 +386,7 @@ class Window:
         except:
             self.cleanup()
             raise RuntimeError("Window creation failed")
+        self.setHotkey()
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
         user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
         self.bitmap = self.loadBitmap(image)
@@ -385,7 +400,8 @@ if __name__ == "__main__":
     ac = AppController()
     ac.start("1.bmp")
     ac.setTransparencyPercent(90)
-    ac.showTitleBar()
+    ac.hideTitleBar()
+    # ac.showTitleBar()
     ac.setTopmost()
     # ac.makeClickThrough()
 
