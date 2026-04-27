@@ -105,3 +105,30 @@ class POINT(ctypes.Structure):
 
 class SIZE(ctypes.Structure):
     _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
+
+class OPENFILENAME(ctypes.Structure):
+    _fields_ = [
+        ("lStructSize", wintypes.DWORD),
+        ("hwndOwner", wintypes.HWND),
+        ("hInstance", wintypes.HINSTANCE),
+        ("lpstrFilter", wintypes.LPCWSTR),
+        ("lpstrCustomFilter", wintypes.LPWSTR),
+        ("nMaxCustFilter", wintypes.DWORD),
+        ("nFilterIndex", wintypes.DWORD),
+        ("lpstrFile", wintypes.LPWSTR),
+        ("nMaxFile", wintypes.DWORD),
+        ("lpstrFileTitle", wintypes.LPWSTR),
+        ("nMaxFileTitle", wintypes.DWORD),
+        ("lpstrInitialDir", wintypes.LPCWSTR),
+        ("lpstrTitle", wintypes.LPCWSTR),
+        ("Flags", wintypes.DWORD),
+        ("nFileOffset", wintypes.WORD),
+        ("nFileExtension", wintypes.WORD),
+        ("lpstrDefExt", wintypes.LPWSTR),
+        ("lCustData", wintypes.LPARAM),
+        ("lpfnHook", wintypes.LPVOID),
+        ("lpTemplateName", wintypes.LPCWSTR),
+        ("pvReserved", wintypes.LPVOID),
+        ("dwReserved", wintypes.DWORD),
+        ("FlagsEx", wintypes.DWORD),
+    ]

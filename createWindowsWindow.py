@@ -5,11 +5,11 @@ import winStructures
 from winStructures import *
 import uuid
 import threading
-import time
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 gdi32 = ctypes.windll.gdi32
+comdlg32 = ctypes.windll.comdlg32
 
 WM_DESTROY: Final[int] = 0x0002
 WM_PAINT: Final[int] = 0x000F
@@ -133,7 +133,8 @@ class Window:
     hInstance = kernel32.GetModuleHandleW(None)
     hwnd = None
     isTitleBarHidden:bool = True
-    
+    button = None
+    button_visible:bool = False
 
     def loadBitmap(self, filename:str):
         bitmap = user32.LoadImageW(
@@ -202,13 +203,31 @@ class Window:
             return 0
         elif msg == WM_SIZE:
             user32.InvalidateRect(hwnd, None, False)
+            width = lparam & 0xFFFF
+            height = (lparam >> 16) & 0xFFFF
+
+            btn_width = width // 4
+            btn_height = 40
+
+            x = (width - btn_width) // 2
+            y = height - btn_height - 20
+
+            user32.MoveWindow(
+                self.button,
+                x, y,
+                btn_width,
+                btn_height,
+                True
+            )
             return 0
         elif msg == WM_HOTKEY:
             if wparam == 1:
                 if self.isTitleBarHidden == True:
                     self.showTitleBar()
+                    self.unmakeClickThrough()
                 elif self.isTitleBarHidden == False:
                     self.hideTitleBar()
+                    self.makeClickThrough()
             return 0
         elif msg == WM_APP + 1:
             user32.InvalidateRect(hwnd, None, False)
@@ -218,10 +237,36 @@ class Window:
             return 0
         elif msg == WM_ERASEBKGND:
             return 1  # tell Windows "I handled it"
+        elif msg == 0x0111:  # WM_COMMAND
+            control_id = wparam & 0xFFFF
+
+            if control_id == 1001:
+                path = self.openFileDialog()
+                if path:
+                    self.loadBitmap(path)
+            elif control_id == 1003:
+                self.toggleClickThrough()
+            return 0
             
         # self.printError()
 
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def openFileDialog(self):
+        buffer = ctypes.create_unicode_buffer(260)
+
+        ofn = OPENFILENAME()
+        ofn.lStructSize = ctypes.sizeof(ofn)
+        ofn.hwndOwner = self.hwnd
+        ofn.lpstrFilter = "Images\0*.bmp;*.png\0All Files\0*.*\0"
+        ofn.lpstrFile = ctypes.cast(buffer, wintypes.LPWSTR)
+        ofn.nMaxFile = 260
+        ofn.Flags = 0x00000008 | 0x00001000  # OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST
+        ofn.lpstrTitle = "Select an image"
+
+        if comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+            return buffer.value
+        return None
 
     def stop(self):
         user32.PostQuitMessage(0)
@@ -260,6 +305,18 @@ class Window:
         if not hwnd:
             raise RuntimeError("CreateWindowEx failed: " + ctypes.FormatError(kernel32.GetLastError()))
         self.hwnd = hwnd
+        self.button = user32.CreateWindowExW(
+            0,
+            "BUTTON",
+            "Open Image",
+            0x50010000,  # WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON
+            0, 0, 100, 30,
+            self.hwnd,
+            1001,  # ID
+            self.hInstance,
+            None
+        )
+        user32.ShowWindow(self.button, 0)
         return hwnd
 
     def messageLoop(self):
@@ -405,17 +462,17 @@ if __name__ == "__main__":
     ac.setTopmost()
     # ac.makeClickThrough()
 
-    i = 15
-    while(True):
-        time.sleep(1)
-        if not ac.isAlive():
-            break
-        ac.loadBitmap("2.bmp")
+    # i = 15
+    # while(True):
+    #     time.sleep(1)
+    #     if not ac.isAlive():
+    #         break
+    #     ac.loadBitmap("2.bmp")
 
-        time.sleep(1)
-        if not ac.isAlive():
-            break
-        ac.loadBitmap("1.bmp")
+    #     time.sleep(1)
+    #     if not ac.isAlive():
+    #         break
+    #     ac.loadBitmap("1.bmp")
 
 
     ac.join()   
