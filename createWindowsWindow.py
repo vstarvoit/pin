@@ -31,6 +31,14 @@ WS_EX_LAYERED: Final[int] = 0x00080000
 LWA_ALPHA: Final[int] = 0x00000002
 GWL_EXSTYLE: Final[int] = -20
 WS_EX_TOPMOST: Final[int] = 0x00000008
+WM_HSCROLL: Final[int] = 0x0114
+WM_COMMAND: Final[int] = 0x0111
+WS_CHILD: Final[ctypes.c_long] = 0x40000000
+WS_VISIBLE: Final[ctypes.c_long] = 0x10000000
+TBS_AUTOTICKS: Final[int] = 0x0001
+TBM_SETRANGE: Final[int] = 0x0401
+TBM_SETPOS: Final[int] = 0x0405
+TBM_GETPOS: Final[int] = 0x0400
 
 class UIThread:
     window = None
@@ -135,6 +143,9 @@ class Window:
     isTitleBarHidden:bool = True
     button = None
     button_visible:bool = False
+    alpha:int = 255
+    slider = None
+
 
     def loadBitmap(self, filename:str):
         bitmap = user32.LoadImageW(
@@ -219,15 +230,32 @@ class Window:
                 btn_height,
                 True
             )
+            slider_width = width // 2
+            slider_height = 30
+            x = (width - slider_width) // 2
+            y = height - slider_height - 70  # 20px above button
+
+            user32.MoveWindow(
+                self.slider,
+                x, y,
+                slider_width, slider_height,
+                True
+            )
             return 0
         elif msg == WM_HOTKEY:
             if wparam == 1:
                 if self.isTitleBarHidden == True:
                     self.showTitleBar()
                     self.unmakeClickThrough()
+                    self.setTransparency(255)
+                    self.showSubWindow(self.button)
+                    self.showSubWindow(self.slider)
                 elif self.isTitleBarHidden == False:
                     self.hideTitleBar()
                     self.makeClickThrough()
+                    self.setTransparency(int(255 * self.alpha / 100))
+                    self.hideSubWindow(self.button)
+                    self.hideSubWindow(self.slider)
             return 0
         elif msg == WM_APP + 1:
             user32.InvalidateRect(hwnd, None, False)
@@ -237,16 +265,18 @@ class Window:
             return 0
         elif msg == WM_ERASEBKGND:
             return 1  # tell Windows "I handled it"
-        elif msg == 0x0111:  # WM_COMMAND
+        elif msg == WM_COMMAND:
             control_id = wparam & 0xFFFF
 
             if control_id == 1001:
                 path = self.openFileDialog()
                 if path:
                     self.loadBitmap(path)
-            elif control_id == 1003:
-                self.toggleClickThrough()
             return 0
+        elif msg == WM_HSCROLL:
+            if lparam == self.slider: 
+                pos = user32.SendMessageW(self.slider, TBM_GETPOS, 0, 0)
+                self.alpha = pos
             
         # self.printError()
 
@@ -267,6 +297,12 @@ class Window:
         if comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
             return buffer.value
         return None
+
+    def showSubWindow(self, wnd):
+        user32.ShowWindow(wnd, 1)
+    
+    def hideSubWindow(self, wnd):
+        user32.ShowWindow(wnd, 0)
 
     def stop(self):
         user32.PostQuitMessage(0)
@@ -316,7 +352,21 @@ class Window:
             self.hInstance,
             None
         )
+        self.slider = user32.CreateWindowExW(
+            0,
+            "msctls_trackbar32",  
+            None,
+            WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+            50, 50, 200, 30,     # X, Y, width, height
+            self.hwnd,
+            2001,                # Slider ID
+            self.hInstance,
+            None
+        )
+        user32.SendMessageW(self.slider, TBM_SETRANGE, 0, (0 << 16) | 255)
+        user32.SendMessageW(self.slider, TBM_SETPOS, 1, self.alpha)
         user32.ShowWindow(self.button, 0)
+        user32.ShowWindow(self.slider, 0)
         return hwnd
 
     def messageLoop(self):
@@ -358,7 +408,7 @@ class Window:
             0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
         )
 
-    def setTransparency(self, alpha:ctypes.c_byte):
+    def setTransparency(self, alpha:int):
         user32.SetLayeredWindowAttributes(self.hwnd, 0, alpha, LWA_ALPHA)
         
     def setTopmost(self):
@@ -376,12 +426,12 @@ class Window:
     def makeClickThrough(self):
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
 
-        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | 0x20 | 0x80000) # WS_EX_LAYERED and WS_EX_TRANSPARENT
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | 0x20 ) # WS_EX_LAYERED and WS_EX_TRANSPARENT
         user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
     
     def unmakeClickThrough(self):
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style & ~(0x20 | 0x80000))  # WS_EX_LAYERED and WS_EX_TRANSPARENT
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style & ~(0x20 ))  # WS_EX_LAYERED and WS_EX_TRANSPARENT
         user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
 
     def unsetTopmost(self):
@@ -456,7 +506,7 @@ if __name__ == "__main__":
     
     ac = AppController()
     ac.start("1.bmp")
-    ac.setTransparencyPercent(90)
+    ac.setTransparencyPercent(10)
     ac.hideTitleBar()
     # ac.showTitleBar()
     ac.setTopmost()
