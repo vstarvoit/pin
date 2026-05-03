@@ -43,7 +43,7 @@ TBM_GETPOS: Final[int] = 0x0400
 class UIThread:
     window = None
     
-    def run(self, ready:threading.Event, imagePath:str, windowName:str = "Window", width:int = 800, height:int = 600):
+    def run(self, ready:threading.Event, imagePath:str = None, windowName:str = "Window", width:int = 800, height:int = 600):
         self.window = Window(imagePath, windowName, width, height)
         ready.set()
         self.window.messageLoop()
@@ -85,7 +85,7 @@ class AppController:
     def __init__(self): 
         self.uithread = UIThread()
 
-    def start(self, imagePath:str, windowName:str = "Window", width:int = 800, height:int = 600):
+    def start(self, imagePath:str = None, windowName:str = "Window", width:int = 800, height:int = 600):
         ready = threading.Event()
         self.thread = threading.Thread(
             target=self.uithread.run,
@@ -264,7 +264,10 @@ class Window:
             user32.DestroyWindow(hwnd)  # triggers WM_DESTROY
             return 0
         elif msg == WM_ERASEBKGND:
-            return 1  # tell Windows "I handled it"
+            if self.bitmap == None:
+                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+            else: 
+                return 1
         elif msg == WM_COMMAND:
             control_id = wparam & 0xFFFF
 
@@ -480,7 +483,7 @@ class Window:
         user32.InvalidateRect(self.hwnd, None, True)
         user32.UpdateWindow(self.hwnd)
 
-    def __init__(self, image: str, windowname:str, width: int = 800, height: int = 600): # make later image size scaled to monitor size 
+    def __init__(self, image:str = None, windowname:str = "Pin", width: int = 800, height: int = 600): # make later image size scaled to monitor size 
         self.setTypes()
         user32.DefWindowProcW.restype = LRESULT
         self.class_name = uuid.uuid4().hex
@@ -496,7 +499,8 @@ class Window:
         self.setHotkey()
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
         user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
-        self.bitmap = self.loadBitmap(image)
+        if (image != None) and (image != ""):
+            self.bitmap = self.loadBitmap(image)
 
         user32.ShowWindow(hwnd, SW_SHOWNORMAL)
         user32.UpdateWindow(hwnd)
@@ -505,24 +509,14 @@ class Window:
 if __name__ == "__main__":
     
     ac = AppController()
-    ac.start("1.bmp")
+    # ac.start("1.bmp")
+    ac.start()
+
     ac.setTransparencyPercent(10)
     ac.hideTitleBar()
-    # ac.showTitleBar()
     ac.setTopmost()
-    # ac.makeClickThrough()
 
-    # i = 15
-    # while(True):
-    #     time.sleep(1)
-    #     if not ac.isAlive():
-    #         break
-    #     ac.loadBitmap("2.bmp")
-
-    #     time.sleep(1)
-    #     if not ac.isAlive():
-    #         break
-    #     ac.loadBitmap("1.bmp")
+    
 
 
     ac.join()   
