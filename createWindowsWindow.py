@@ -5,12 +5,17 @@ import winStructures
 from winStructures import *
 import uuid
 import threading
+from PIL import Image
+import numpy as np
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 gdi32 = ctypes.windll.gdi32
 comdlg32 = ctypes.windll.comdlg32
+msimg32 = ctypes.windll.msimg32
+comctl32 = ctypes.windll.comctl32
 
+WM_EXITSIZEMOVE: Final[int] = 0x0232
 WM_DESTROY: Final[int] = 0x0002
 WM_PAINT: Final[int] = 0x000F
 WM_SIZE: Final[int] = 0x0005
@@ -18,6 +23,7 @@ SRCCOPY: Final[int] = 0x00CC0020
 IMAGE_BITMAP: Final[int] = 0
 LR_LOADFROMFILE: Final[int] = 0x00000010
 WS_OVERLAPPEDWINDOW: Final[int] = 0x10CF0000
+WS_POPUP: Final[int] =0x80000000  
 WM_APP: Final[int] = 0x8000
 WM_CLOSE: Final[int] = 0x0010
 SW_SHOWNORMAL: Final[int] = 0x0001
@@ -28,7 +34,6 @@ WS_SYSMENU: Final[ctypes.c_long] = 0x00080000
 WS_CAPTION: Final[ctypes.c_long] = 0x00C00000
 WS_THICKFRAME: Final[ctypes.c_long] = 0x00040000
 WS_EX_LAYERED: Final[int] = 0x00080000
-LWA_ALPHA: Final[int] = 0x00000002
 GWL_EXSTYLE: Final[int] = -20
 WS_EX_TOPMOST: Final[int] = 0x00000008
 WM_HSCROLL: Final[int] = 0x0114
@@ -142,31 +147,183 @@ class Window:
     hwnd = None
     isTitleBarHidden:bool = True
     button = None
-    button_visible:bool = False
     alpha:int = 255
     slider = None
+    original_bitmap = None
+    scaled_bitmap = None
 
+    def loadImage(self, path: str):
+        img = Image.open(path).convert("RGBA")
+        width, height = img.size
 
-    def loadBitmap(self, filename:str):
-        bitmap = user32.LoadImageW(
+        arr = np.array(img, dtype=np.uint8)
+
+        # premultiply alpha
+        alpha = arr[:, :, 3:4] / 255.0
+        arr[:, :, :3] = (arr[:, :, :3] * alpha).astype(np.uint8)
+
+        # RGBA → BGRA 
+        arr = arr[:, :, [2, 1, 0, 3]]
+
+        bmi = BITMAPINFO()
+        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.bmiHeader.biWidth = width
+        bmi.bmiHeader.biHeight = -height  
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = 0  # BI_RGB
+
+        bits = ctypes.c_void_p()
+
+        hdc = user32.GetDC(None)
+
+        hbitmap = gdi32.CreateDIBSection(
+            hdc,
+            ctypes.byref(bmi),
+            0,
+            ctypes.byref(bits),
             None,
-            filename,  
-            IMAGE_BITMAP,
-            0,
-            0,
-            LR_LOADFROMFILE
+            0
         )
-        # self.printError()
 
-        if not bitmap:
-            raise RuntimeError("Failed to load bitmap")
-        self.bitmap, bitmap = bitmap, self.bitmap
-        if bitmap != None:
-            gdi32.DeleteObject(bitmap)
-        user32.PostMessageW(self.hwnd, WM_APP + 1, 0, 0)
-        
-        return self.bitmap
+        user32.ReleaseDC(None, hdc)
+
+        if not hbitmap:
+            raise RuntimeError("CreateDIBSection failed")
+
+        # copy pixel data
+        ctypes.memmove(bits, arr.tobytes(), arr.nbytes)
+
+        return hbitmap, width, height
+
+    def loadBitmap(self, filename: str):
+        hbitmap, w, h = self.loadImage(filename)
+
+        if self.original_bitmap:
+            gdi32.DeleteObject(self.original_bitmap)
+
+        self.original_bitmap = hbitmap
+
+        self.image_width = w
+        self.image_height = h
+
+        self.resizeBitmapToWindow()
+        self.renderLayered()
+        user32.UpdateWindow(self.hwnd)
     
+    def resizeBitmapToWindow(self):
+        if not self.original_bitmap:
+            return
+
+        rect = RECT()
+        user32.GetWindowRect(self.hwnd, ctypes.byref(rect))   
+
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top 
+
+        if width <= 0 or height <= 0:
+            return
+
+        screen_dc = user32.GetDC(None)
+
+        src_dc = gdi32.CreateCompatibleDC(screen_dc)
+        dst_dc = gdi32.CreateCompatibleDC(screen_dc)
+
+        old_src = gdi32.SelectObject(src_dc, self.original_bitmap)
+
+        bmi = BITMAPINFO()
+        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.bmiHeader.biWidth = width
+        bmi.bmiHeader.biHeight = -height
+        bmi.bmiHeader.biPlanes = 1
+        bmi.bmiHeader.biBitCount = 32
+        bmi.bmiHeader.biCompression = 0
+
+        bits = ctypes.c_void_p()
+
+        new_bitmap = gdi32.CreateDIBSection(
+            screen_dc,
+            ctypes.byref(bmi),
+            0,
+            ctypes.byref(bits),
+            None,
+            0
+        )
+
+        old_dst = gdi32.SelectObject(dst_dc, new_bitmap)
+
+        blend_fn = BLENDFUNCTION()
+        blend_fn.BlendOp = 0          # AC_SRC_OVER
+        blend_fn.BlendFlags = 0
+        blend_fn.SourceConstantAlpha = 255
+        blend_fn.AlphaFormat = 1      # AC_SRC_ALPHA
+
+        msimg32.AlphaBlend(
+            dst_dc,
+            0, 0, width, height,
+            src_dc,
+            0, 0,
+            self.image_width, self.image_height,
+            blend_fn  
+        )
+
+        gdi32.SelectObject(src_dc, old_src)
+        gdi32.SelectObject(dst_dc, old_dst)
+
+        gdi32.DeleteDC(src_dc)
+        gdi32.DeleteDC(dst_dc)
+
+        user32.ReleaseDC(None, screen_dc)
+
+        if self.scaled_bitmap:
+            gdi32.DeleteObject(self.scaled_bitmap)
+
+        self.scaled_bitmap = new_bitmap
+
+        self.bmp_width = width
+        self.bmp_height = height
+
+    def renderLayered(self):
+        bitmap = self.scaled_bitmap
+        if not bitmap:
+            return
+
+        screen_dc = user32.GetDC(None)
+        mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+
+        old_obj = gdi32.SelectObject(mem_dc, bitmap)
+
+        rect = RECT()
+        user32.GetWindowRect(self.hwnd, ctypes.byref(rect))
+
+        win_width = rect.right - rect.left
+        win_height = rect.bottom - rect.top
+
+        size = SIZE(win_width, win_height)   # use full window size, not client size
+        pt_src = POINT(0, 0)
+        pt_dst = POINT(rect.left, rect.top)
+
+        blend = BLENDFUNCTION()
+        blend.BlendOp = 0
+        blend.BlendFlags = 0
+        blend.SourceConstantAlpha = self.alpha
+        blend.AlphaFormat = 1
+
+        user32.UpdateLayeredWindow(
+            self.hwnd, screen_dc,
+            ctypes.byref(pt_dst),
+            ctypes.byref(size),
+            mem_dc,
+            ctypes.byref(pt_src),
+            0,
+            ctypes.byref(blend),
+            0x00000002
+        )
+
+        gdi32.SelectObject(mem_dc, old_obj)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(None, screen_dc)
+
     def windowProcedure(self, hwnd, msg, wparam, lparam):
         if msg == WM_DESTROY:
             self.cleanup()
@@ -176,44 +333,55 @@ class Window:
             ps = PAINTSTRUCT()
             hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
 
-            mem_dc = gdi32.CreateCompatibleDC(hdc)
-            if not self.bitmap:
-                user32.EndPaint(hwnd, ctypes.byref(ps))
-                return 0
-            
-            old_obj = gdi32.SelectObject(mem_dc, self.bitmap)
-            
-            if not old_obj:
-                gdi32.DeleteDC(mem_dc)
-                user32.EndPaint(hwnd, ctypes.byref(ps))
-                return 0
-
-            bmp = BITMAP()
-            gdi32.GetObjectW(self.bitmap, ctypes.sizeof(bmp), ctypes.byref(bmp))
-            gdi32.SetStretchBltMode(hdc, 0x0003)
             rect = RECT()
             user32.GetClientRect(hwnd, ctypes.byref(rect))
 
-            width = rect.right - rect.left
-            height = rect.bottom - rect.top
-            gdi32.StretchBlt(
-                hdc,
-                0, 0,
-                width,
-                height,
-                mem_dc,
-                0, 0,
-                bmp.bmWidth,
-                bmp.bmHeight,
-                SRCCOPY
-            )
+            if not self.original_bitmap:
+                hbr = gdi32.GetStockObject(0)  # WHITE_BRUSH
+                user32.FillRect(hdc, ctypes.byref(rect), hbr)
 
-            gdi32.SelectObject(mem_dc, old_obj)
-            gdi32.DeleteDC(mem_dc)
+                user32.DrawTextW(
+                    hdc,
+                    "No image loaded",
+                    -1,
+                    ctypes.byref(rect),
+                    0x00000001 | 0x00000004  # DT_CENTER | DT_VCENTER
+                )
+            else:
+                mem_dc = gdi32.CreateCompatibleDC(hdc)
+
+                old_obj = gdi32.SelectObject(mem_dc, self.original_bitmap)
+                if not old_obj:
+                    gdi32.DeleteDC(mem_dc)
+                    user32.EndPaint(hwnd, ctypes.byref(ps))
+                    return 0
+
+                bmp = BITMAP()
+                gdi32.GetObjectW(self.original_bitmap, ctypes.sizeof(bmp), ctypes.byref(bmp))
+
+                gdi32.SetStretchBltMode(hdc, 0x0003)  # HALFTONE
+
+                width = rect.right - rect.left
+                height = rect.bottom - rect.top
+
+                gdi32.StretchBlt(
+                    hdc,
+                    0, 0,
+                    width, height,
+                    mem_dc,
+                    0, 0,
+                    bmp.bmWidth,
+                    bmp.bmHeight,
+                    SRCCOPY
+                )
+
+                gdi32.SelectObject(mem_dc, old_obj)
+                gdi32.DeleteDC(mem_dc)
+            
             user32.EndPaint(hwnd, ctypes.byref(ps))
+            
             return 0
         elif msg == WM_SIZE:
-            user32.InvalidateRect(hwnd, None, False)
             width = lparam & 0xFFFF
             height = (lparam >> 16) & 0xFFFF
 
@@ -245,29 +413,26 @@ class Window:
         elif msg == WM_HOTKEY:
             if wparam == 1:
                 if self.isTitleBarHidden == True:
-                    self.showTitleBar()
-                    self.unmakeClickThrough()
-                    self.setTransparency(255)
-                    self.showSubWindow(self.button)
-                    self.showSubWindow(self.slider)
+                    self.showEditorUI()
                 elif self.isTitleBarHidden == False:
-                    self.hideTitleBar()
-                    self.makeClickThrough()
-                    self.setTransparency(int(255 * self.alpha / 100))
-                    self.hideSubWindow(self.button)
-                    self.hideSubWindow(self.slider)
-            return 0
-        elif msg == WM_APP + 1:
-            user32.InvalidateRect(hwnd, None, False)
+                    self.hideEditorUI()
             return 0
         elif msg == WM_CLOSE:
             user32.DestroyWindow(hwnd)  # triggers WM_DESTROY
             return 0
+        elif msg == WM_EXITSIZEMOVE:
+            self.resizeBitmapToWindow()
+            self.renderLayered()
+            user32.UpdateWindow(self.hwnd)
+            user32.InvalidateRect(self.hwnd, None, True)
+        
+            return 0
         elif msg == WM_ERASEBKGND:
-            if self.bitmap == None:
-                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
-            else: 
+            ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            if ex & WS_EX_LAYERED:
                 return 1
+            return 0
+
         elif msg == WM_COMMAND:
             control_id = wparam & 0xFFFF
 
@@ -275,15 +440,62 @@ class Window:
                 path = self.openFileDialog()
                 if path:
                     self.loadBitmap(path)
+                    self.hideEditorUI()
+                    self.showEditorUI()
             return 0
         elif msg == WM_HSCROLL:
-            if lparam == self.slider: 
+            if lparam == self.slider:
                 pos = user32.SendMessageW(self.slider, TBM_GETPOS, 0, 0)
-                self.alpha = pos
+                self.alpha = int(pos * 2.55)
+                if self.original_bitmap:
+                    self.resizeBitmapToWindow()
+                    self.renderLayered()
+
             
         # self.printError()
 
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    def showEditorUI(self):
+        self.disableLayered()
+        self.showTitleBar()
+        self.showSubWindow(self.button)
+        user32.SendMessageW(self.slider, TBM_SETPOS, 1, self.alpha)
+        self.showSubWindow(self.slider)
+        user32.InvalidateRect(self.hwnd, None, True)
+        user32.UpdateWindow(self.hwnd)
+        user32.RedrawWindow(self.hwnd, None, None, 0x0085)  # RDW_ERASE | RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN
+
+
+    def hideEditorUI(self):
+        self.hideSubWindow(self.button)
+        self.hideSubWindow(self.slider)
+        self.hideTitleBar()
+ 
+        if self.original_bitmap:
+            self.enableLayered()   
+            self.renderLayered()   
+        else:
+            self.disableLayered()
+            user32.RedrawWindow(self.hwnd, None, None, 0x0085)
+
+    def disableLayered(self):
+        style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+        style &= ~WS_EX_LAYERED
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, style)
+        user32.SetWindowPos(
+            self.hwnd, 0, 0, 0, 0, 0,
+            0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+        )
+ 
+    def enableLayered(self):
+        style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
+        style |= WS_EX_LAYERED
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, style)
+        user32.SetWindowPos(
+            self.hwnd, 0, 0, 0, 0, 0,
+            0x0027  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+        )
 
     def openFileDialog(self):
         buffer = ctypes.create_unicode_buffer(260)
@@ -318,7 +530,6 @@ class Window:
         wndclass.hInstance = self.hInstance
         wndclass.hCursor = user32.LoadCursorW(None, 32512)
         wndclass.hbrBackground = ctypes.c_void_p(5)  # COLOR_WINDOW + 1
-
         atom = user32.RegisterClassW(ctypes.byref(wndclass))
         if not atom:
             raise RuntimeError(ctypes.FormatError(kernel32.GetLastError()))
@@ -366,7 +577,6 @@ class Window:
             self.hInstance,
             None
         )
-        user32.SendMessageW(self.slider, TBM_SETRANGE, 0, (0 << 16) | 255)
         user32.SendMessageW(self.slider, TBM_SETPOS, 1, self.alpha)
         user32.ShowWindow(self.button, 0)
         user32.ShowWindow(self.slider, 0)
@@ -386,6 +596,17 @@ class Window:
             wintypes.WPARAM,
             wintypes.LPARAM,
         )
+        user32.UpdateLayeredWindow.argtypes = [
+            wintypes.HWND,
+            wintypes.HDC,
+            ctypes.POINTER(POINT),
+            ctypes.POINTER(SIZE),
+            wintypes.HDC,
+            ctypes.POINTER(POINT),
+            wintypes.COLORREF,
+            ctypes.POINTER(BLENDFUNCTION),
+            wintypes.DWORD,
+        ]
 
     def showTitleBar(self):
         style = user32.GetWindowLongW(self.hwnd, GWL_STYLE)
@@ -412,7 +633,11 @@ class Window:
         )
 
     def setTransparency(self, alpha:int):
-        user32.SetLayeredWindowAttributes(self.hwnd, 0, alpha, LWA_ALPHA)
+        self.alpha = alpha
+        if self.slider:
+            user32.SendMessageW(self.slider, TBM_SETPOS, 1, alpha)
+        self.renderLayered()
+
         
     def setTopmost(self):
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
@@ -429,12 +654,12 @@ class Window:
     def makeClickThrough(self):
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
 
-        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | 0x20 ) # WS_EX_LAYERED and WS_EX_TRANSPARENT
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | 0x20 ) # WS_EX_TRANSPARENT
         user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
     
     def unmakeClickThrough(self):
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style & ~(0x20 ))  # WS_EX_LAYERED and WS_EX_TRANSPARENT
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style & ~(0x20 ))  # WS_EX_TRANSPARENT
         user32.SetWindowPos(self.hwnd, -1, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
 
     def unsetTopmost(self):
@@ -465,9 +690,13 @@ class Window:
         user32.UnregisterClassW(self.class_name ,self.hInstance)
     
     def bitmapCleanup(self):
-        if self.bitmap:
-            gdi32.DeleteObject(self.bitmap)
-            self.bitmap = None
+        if self.original_bitmap:
+            gdi32.DeleteObject(self.original_bitmap)
+            self.original_bitmap = None
+
+        if self.scaled_bitmap:
+            gdi32.DeleteObject(self.scaled_bitmap)
+            self.scaled_bitmap = None
 
     def windowCleanup(self):
         if self.hwnd:
@@ -480,7 +709,6 @@ class Window:
         self.createWindowClassCleanup()
 
     def refreshWindow(self):
-        user32.InvalidateRect(self.hwnd, None, True)
         user32.UpdateWindow(self.hwnd)
 
     def __init__(self, image:str = None, windowname:str = "Pin", width: int = 800, height: int = 600): # make later image size scaled to monitor size 
@@ -488,31 +716,33 @@ class Window:
         user32.DefWindowProcW.restype = LRESULT
         self.class_name = uuid.uuid4().hex
         wndclass = self.createWindowClass()
-       
+    
         # self.printError()
 
         try:
-             hwnd = self.createWindow(width, height)
+            hwnd = self.createWindow(width, height)
         except:
             self.cleanup()
             raise RuntimeError("Window creation failed")
         self.setHotkey()
         ex_style = user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
-        if (image != None) and (image != ""):
-            self.bitmap = self.loadBitmap(image)
-
+        user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style)
+        
+        self.bmp_width = width
+        self.bmp_height = height
         user32.ShowWindow(hwnd, SW_SHOWNORMAL)
+
+        if image:
+            self.loadBitmap(image)
+
         user32.UpdateWindow(hwnd)
     
 
 if __name__ == "__main__":
     
     ac = AppController()
-    # ac.start("1.bmp")
     ac.start()
 
-    ac.setTransparencyPercent(10)
     ac.hideTitleBar()
     ac.setTopmost()
 

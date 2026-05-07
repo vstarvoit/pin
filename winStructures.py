@@ -106,6 +106,12 @@ class POINT(ctypes.Structure):
 class SIZE(ctypes.Structure):
     _fields_ = [("cx", ctypes.c_long), ("cy", ctypes.c_long)]
 
+class INITCOMMONCONTROLSEX(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("dwICC", wintypes.DWORD),
+    ]
+
 class OPENFILENAME(ctypes.Structure):
     _fields_ = [
         ("lStructSize", wintypes.DWORD),
