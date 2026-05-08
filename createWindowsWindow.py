@@ -38,6 +38,16 @@ GWL_EXSTYLE: Final[int] = -20
 WS_EX_TOPMOST: Final[int] = 0x00000008
 WM_HSCROLL: Final[int] = 0x0114
 WM_COMMAND: Final[int] = 0x0111
+WM_SIZING: Final[int] = 0x0214
+VK_SHIFT: Final[int] = 0x10
+WMSZ_LEFT:        Final[int] = 1
+WMSZ_RIGHT:       Final[int] = 2
+WMSZ_TOP:         Final[int] = 3
+WMSZ_TOPLEFT:     Final[int] = 4
+WMSZ_TOPRIGHT:    Final[int] = 5
+WMSZ_BOTTOM:      Final[int] = 6
+WMSZ_BOTTOMLEFT:  Final[int] = 7
+WMSZ_BOTTOMRIGHT: Final[int] = 8
 WS_CHILD: Final[ctypes.c_long] = 0x40000000
 WS_VISIBLE: Final[ctypes.c_long] = 0x10000000
 TBS_AUTOTICKS: Final[int] = 0x0001
@@ -147,10 +157,13 @@ class Window:
     hwnd = None
     isTitleBarHidden:bool = True
     button = None
+    reset_button = None
     alpha:int = 255
     slider = None
     original_bitmap = None
     scaled_bitmap = None
+    image_width: int = 0
+    image_height: int = 0
 
     def loadImage(self, path: str):
         img = Image.open(path).convert("RGBA")
@@ -196,6 +209,27 @@ class Window:
 
         return hbitmap, width, height
 
+    def getMonitorSize(self) -> tuple[int, int]:
+        """Return the (width, height) of the monitor the window is currently on."""
+        MONITOR_DEFAULTTONEAREST: Final[int] = 0x00000002
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize",    wintypes.DWORD),
+                ("rcMonitor", RECT),
+                ("rcWork",    RECT),
+                ("dwFlags",   wintypes.DWORD),
+            ]
+
+        hmon = user32.MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST)
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+
+        mon_w = mi.rcMonitor.right  - mi.rcMonitor.left
+        mon_h = mi.rcMonitor.bottom - mi.rcMonitor.top
+        return mon_w, mon_h
+
     def loadBitmap(self, filename: str):
         hbitmap, w, h = self.loadImage(filename)
 
@@ -203,9 +237,44 @@ class Window:
             gdi32.DeleteObject(self.original_bitmap)
 
         self.original_bitmap = hbitmap
-
         self.image_width = w
         self.image_height = h
+
+        mon_w, mon_h = self.getMonitorSize()
+        target_w = int(mon_w * 3 / 4)
+        target_h = int(mon_h * 3 / 4)
+
+        scale = min(target_w / w, target_h / h)   
+        win_w = max(1, int(w * scale))
+        win_h = max(1, int(h * scale))
+
+        hmon_rect = RECT()
+        user32.GetWindowRect(self.hwnd, ctypes.byref(hmon_rect))
+        MONITOR_DEFAULTTONEAREST: Final[int] = 0x00000002
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize",    wintypes.DWORD),
+                ("rcMonitor", RECT),
+                ("rcWork",    RECT),
+                ("dwFlags",   wintypes.DWORD),
+            ]
+
+        hmon = user32.MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST)
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        user32.GetMonitorInfoW(hmon, ctypes.byref(mi))
+
+        mon_x = mi.rcMonitor.left
+        mon_y = mi.rcMonitor.top
+        cx = mon_x + (mon_w - win_w) // 2
+        cy = mon_y + (mon_h - win_h) // 2
+
+        user32.SetWindowPos(
+            self.hwnd, 0,
+            cx, cy, win_w, win_h,
+            0x0004  # SWP_NOZORDER
+        )
 
         self.resizeBitmapToWindow()
         self.renderLayered()
@@ -385,23 +454,22 @@ class Window:
             width = lparam & 0xFFFF
             height = (lparam >> 16) & 0xFFFF
 
-            btn_width = width // 4
+            btn_width = width // 5
             btn_height = 40
+            gap = 10
 
-            x = (width - btn_width) // 2
+            total_btns = btn_width * 2 + gap
+            x_start = (width - total_btns) // 2
             y = height - btn_height - 20
 
-            user32.MoveWindow(
-                self.button,
-                x, y,
-                btn_width,
-                btn_height,
-                True
-            )
+            user32.MoveWindow(self.button, x_start, y, btn_width, btn_height, True)
+            user32.MoveWindow(self.reset_button, x_start + btn_width + gap, y, btn_width, btn_height, True)
+
             slider_width = width // 2
             slider_height = 30
             x = (width - slider_width) // 2
-            y = height - slider_height - 70  # 20px above button
+            y = height - slider_height - 70  # above buttons
+            user32.InvalidateRect(self.hwnd, None, True)
 
             user32.MoveWindow(
                 self.slider,
@@ -433,6 +501,40 @@ class Window:
                 return 1
             return 0
 
+        elif msg == WM_SIZING:
+            if self.image_width and self.image_height and (user32.GetKeyState(VK_SHIFT) & 0x8000):
+                ratio = self.image_width / self.image_height  # w/h
+                drag_rect = ctypes.cast(lparam, ctypes.POINTER(RECT)).contents
+                new_w = drag_rect.right  - drag_rect.left
+                new_h = drag_rect.bottom - drag_rect.top
+
+                edge = wparam
+                if edge in (WMSZ_LEFT, WMSZ_RIGHT):
+                    new_h = max(1, int(new_w / ratio))
+                    if edge == WMSZ_LEFT:
+                        drag_rect.left = drag_rect.right - new_w
+                    else:
+                        drag_rect.right = drag_rect.left + new_w
+                    drag_rect.bottom = drag_rect.top + new_h
+                elif edge in (WMSZ_TOP, WMSZ_BOTTOM):
+                    new_w = max(1, int(new_h * ratio))
+                    drag_rect.right = drag_rect.left + new_w
+                    if edge == WMSZ_TOP:
+                        drag_rect.top = drag_rect.bottom - new_h
+                    else:
+                        drag_rect.bottom = drag_rect.top + new_h
+                else:
+                    new_h = max(1, int(new_w / ratio))
+                    if edge in (WMSZ_TOPLEFT, WMSZ_TOPRIGHT):
+                        drag_rect.top = drag_rect.bottom - new_h
+                    else:
+                        drag_rect.bottom = drag_rect.top + new_h
+                    if edge in (WMSZ_TOPLEFT, WMSZ_BOTTOMLEFT):
+                        drag_rect.left = drag_rect.right - new_w
+                    else:
+                        drag_rect.right = drag_rect.left + new_w
+            return 1  
+
         elif msg == WM_COMMAND:
             control_id = wparam & 0xFFFF
 
@@ -442,6 +544,8 @@ class Window:
                     self.loadBitmap(path)
                     self.hideEditorUI()
                     self.showEditorUI()
+            elif control_id == 1002:
+                self.resetAspectRatio()
             return 0
         elif msg == WM_HSCROLL:
             if lparam == self.slider:
@@ -456,10 +560,35 @@ class Window:
 
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
+    def resetAspectRatio(self):
+        """Resize window so it exactly matches the image's original aspect ratio,
+        keeping the current window width and adjusting height."""
+        if not self.original_bitmap or not self.image_width or not self.image_height:
+            return
+
+        rect = RECT()
+        user32.GetWindowRect(self.hwnd, ctypes.byref(rect))
+        cur_w = rect.right - rect.left
+
+        ratio = self.image_height / self.image_width
+        new_h = max(1, int(cur_w * ratio))
+
+        user32.SetWindowPos(
+            self.hwnd, 0,
+            rect.left, rect.top,
+            cur_w, new_h,
+            0x0004  # SWP_NOZORDER
+        )
+
+        self.resizeBitmapToWindow()
+        self.renderLayered()
+        user32.UpdateWindow(self.hwnd)
+
     def showEditorUI(self):
         self.disableLayered()
         self.showTitleBar()
         self.showSubWindow(self.button)
+        self.showSubWindow(self.reset_button)
         user32.SendMessageW(self.slider, TBM_SETPOS, 1, self.alpha)
         self.showSubWindow(self.slider)
         user32.InvalidateRect(self.hwnd, None, True)
@@ -469,6 +598,7 @@ class Window:
 
     def hideEditorUI(self):
         self.hideSubWindow(self.button)
+        self.hideSubWindow(self.reset_button)
         self.hideSubWindow(self.slider)
         self.hideTitleBar()
  
@@ -566,6 +696,17 @@ class Window:
             self.hInstance,
             None
         )
+        self.reset_button = user32.CreateWindowExW(
+            0,
+            "BUTTON",
+            "Reset Proportions",
+            0x50010000,  # WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON
+            0, 0, 100, 30,
+            self.hwnd,
+            1002,  # ID
+            self.hInstance,
+            None
+        )
         self.slider = user32.CreateWindowExW(
             0,
             "msctls_trackbar32",  
@@ -579,6 +720,7 @@ class Window:
         )
         user32.SendMessageW(self.slider, TBM_SETPOS, 1, self.alpha)
         user32.ShowWindow(self.button, 0)
+        user32.ShowWindow(self.reset_button, 0)
         user32.ShowWindow(self.slider, 0)
         return hwnd
 
@@ -749,4 +891,4 @@ if __name__ == "__main__":
     
 
 
-    ac.join()   
+    ac.join()
