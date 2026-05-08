@@ -4,11 +4,6 @@ import time
 
 
 ac = AppController()
-ac.start("")
-ac.setTransparencyPercent(10)
+ac.start()
 ac.hideTitleBar()
-# ac.showTitleBar()
-ac.setTopmost()
-    
-
-# ac.join()
+ac.join()

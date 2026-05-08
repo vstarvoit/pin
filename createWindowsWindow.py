@@ -368,7 +368,7 @@ class Window:
         win_width = rect.right - rect.left
         win_height = rect.bottom - rect.top
 
-        size = SIZE(win_width, win_height)   # use full window size, not client size
+        size = SIZE(win_width, win_height)  
         pt_src = POINT(0, 0)
         pt_dst = POINT(rect.left, rect.top)
 
@@ -493,14 +493,12 @@ class Window:
             self.renderLayered()
             user32.UpdateWindow(self.hwnd)
             user32.InvalidateRect(self.hwnd, None, True)
-        
             return 0
         elif msg == WM_ERASEBKGND:
             ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             if ex & WS_EX_LAYERED:
                 return 1
             return 0
-
         elif msg == WM_SIZING:
             if self.image_width and self.image_height and (user32.GetKeyState(VK_SHIFT) & 0x8000):
                 ratio = self.image_width / self.image_height  # w/h
@@ -585,6 +583,7 @@ class Window:
         user32.UpdateWindow(self.hwnd)
 
     def showEditorUI(self):
+        self.unmakeClickThrough()
         self.disableLayered()
         self.showTitleBar()
         self.showSubWindow(self.button)
@@ -597,6 +596,7 @@ class Window:
 
 
     def hideEditorUI(self):
+        self.makeClickThrough()
         self.hideSubWindow(self.button)
         self.hideSubWindow(self.reset_button)
         self.hideSubWindow(self.slider)
@@ -853,7 +853,7 @@ class Window:
     def refreshWindow(self):
         user32.UpdateWindow(self.hwnd)
 
-    def __init__(self, image:str = None, windowname:str = "Pin", width: int = 800, height: int = 600): # make later image size scaled to monitor size 
+    def __init__(self, image:str = None, windowname:str = "Pin", width: int = 800, height: int = 600): 
         self.setTypes()
         user32.DefWindowProcW.restype = LRESULT
         self.class_name = uuid.uuid4().hex
@@ -884,11 +884,5 @@ if __name__ == "__main__":
     
     ac = AppController()
     ac.start()
-
     ac.hideTitleBar()
-    ac.setTopmost()
-
-    
-
-
     ac.join()
